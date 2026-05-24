@@ -6,6 +6,9 @@
 const API_KEY = "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";
 const API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+// النموذج البديل المعتمد بعد إيقاف gemma2-9b-it
+const FALLBACK_MODEL = "llama-3.1-8b-instant";
+
 // ── State ──────────────────────────────────────────
 const state = {
   sessions: JSON.parse(localStorage.getItem("nexus_sessions") || "[]"),
@@ -37,11 +40,17 @@ function saveState() {
   localStorage.setItem("nexus_sessions", JSON.stringify(state.sessions));
 }
 
+function getActiveModel(sessionModel) {
+  const model = sessionModel || modelSelect.value;
+  return model === "gemma2-9b-it" ? FALLBACK_MODEL : model;
+}
+
 function createSession() {
+  const currentModel = modelSelect.value === "gemma2-9b-it" ? FALLBACK_MODEL : modelSelect.value;
   const session = {
     id: Date.now().toString(),
     title: "New conversation",
-    model: modelSelect.value,
+    model: currentModel,
     messages: [],
     createdAt: Date.now(),
   };
@@ -227,209 +236,4 @@ async function send(text) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: session.model || modelSelect.value,
-        messages: [
-          {
-            role: "system",
-            content: "You are NEXUS, an advanced AI assistant with a sleek, professional persona. You are helpful, precise, and insightful. Format responses with markdown when appropriate.",
-          },
-          ...session.messages,
-        ],
-        stream: true,
-        max_tokens: 2048,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${res.status}`);
-    }
-
-    // Remove typing indicator and create streaming bubble
-    hideTyping();
-
-    const welcome = document.getElementById("welcome");
-    if (welcome) welcome.remove();
-
-    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const msgEl = document.createElement("div");
-    msgEl.className = "msg msg-ai";
-    msgEl.innerHTML = `
-      <div class="msg-avatar">N</div>
-      <div class="msg-content">
-        <div class="msg-meta">NEXUS · ${now}</div>
-        <div class="msg-bubble streaming-cursor"></div>
-      </div>
-    `;
-    messagesEl.appendChild(msgEl);
-    const bubble = msgEl.querySelector(".msg-bubble");
-
-    // Stream response
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let fullText = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n").filter((l) => l.startsWith("data: "));
-
-      for (const line of lines) {
-        const data = line.slice(6);
-        if (data === "[DONE]") break;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content || "";
-          fullText += delta;
-          bubble.innerHTML = renderMarkdown(fullText);
-          scrollBottom();
-        } catch (_) {}
-      }
-    }
-
-    // Remove cursor
-    bubble.classList.remove("streaming-cursor");
-
-    // Save AI message
-    session.messages.push({ role: "assistant", content: fullText });
-    saveState();
-  } catch (err) {
-    hideTyping();
-    const errEl = document.createElement("div");
-    errEl.className = "msg msg-ai msg-error";
-    errEl.innerHTML = `
-      <div class="msg-avatar">!</div>
-      <div class="msg-content">
-        <div class="msg-bubble">⚠ Error: ${escapeHtml(err.message)}</div>
-      </div>
-    `;
-    messagesEl.appendChild(errEl);
-    scrollBottom();
-  } finally {
-    state.isLoading = false;
-    sendBtn.disabled = !userInput.value.trim();
-  }
-}
-
-// ── Auto-resize textarea ───────────────────────────
-function autoResize() {
-  userInput.style.height = "auto";
-  userInput.style.height = Math.min(userInput.scrollHeight, 180) + "px";
-}
-
-// ── Suggestion chips ───────────────────────────────
-function bindChips() {
-  document.querySelectorAll(".suggestion-chip").forEach((chip) => {
-    chip.addEventListener("click", () => {
-      userInput.value = chip.dataset.text;
-      autoResize();
-      sendBtn.disabled = false;
-      userInput.focus();
-    });
-  });
-}
-
-// ── Toast ──────────────────────────────────────────
-function showToast(msg) {
-  let toast = document.querySelector(".toast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.className = "toast";
-    document.body.appendChild(toast);
-  }
-  toast.textContent = msg;
-  toast.classList.add("show");
-  setTimeout(() => toast.classList.remove("show"), 2500);
-}
-
-// ── Sidebar ────────────────────────────────────────
-function closeSidebarOnMobile() {
-  if (window.innerWidth <= 768) {
-    sidebar.classList.remove("open");
-    document.querySelector(".overlay")?.remove();
-  }
-}
-
-sidebarToggle.addEventListener("click", () => {
-  sidebar.classList.toggle("collapsed");
-});
-
-menuBtn.addEventListener("click", () => {
-  sidebar.classList.toggle("open");
-  if (sidebar.classList.contains("open")) {
-    const overlay = document.createElement("div");
-    overlay.className = "overlay";
-    overlay.addEventListener("click", closeSidebarOnMobile);
-    document.body.appendChild(overlay);
-  } else {
-    document.querySelector(".overlay")?.remove();
-  }
-});
-
-// ── New chat ───────────────────────────────────────
-newChatBtn.addEventListener("click", () => {
-  const session = createSession();
-  renderMessages();
-  closeSidebarOnMobile();
-  userInput.focus();
-});
-
-// ── Clear chat ─────────────────────────────────────
-clearBtn.addEventListener("click", () => {
-  const session = getSession();
-  if (!session || session.messages.length === 0) return;
-  session.messages = [];
-  session.title = "New conversation";
-  saveState();
-  renderHistory();
-  renderMessages();
-  showToast("Chat cleared");
-});
-
-// ── Model change ───────────────────────────────────
-modelSelect.addEventListener("change", () => {
-  modelLabel.textContent = modelSelect.options[modelSelect.selectedIndex].text;
-  const session = getSession();
-  if (session) {
-    session.model = modelSelect.value;
-    saveState();
-  }
-});
-
-// ── Input events ───────────────────────────────────
-userInput.addEventListener("input", () => {
-  autoResize();
-  sendBtn.disabled = !userInput.value.trim() || state.isLoading;
-});
-
-userInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    if (!sendBtn.disabled) send(userInput.value);
-  }
-});
-
-sendBtn.addEventListener("click", () => send(userInput.value));
-
-// ── Init ───────────────────────────────────────────
-(function init() {
-  // Load latest session or create new
-  if (state.sessions.length > 0) {
-    state.currentId = state.sessions[0].id;
-  } else {
-    createSession();
-  }
-  renderHistory();
-  renderMessages();
-  bindChips();
-  userInput.focus();
-
-  // Update model label
-  modelLabel.textContent = modelSelect.options[modelSelect.selectedIndex].text;
-})();
+                                                 
