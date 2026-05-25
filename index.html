@@ -508,12 +508,39 @@ inputEl.addEventListener("input",()=>{ resize(); sendBtn.disabled=!inputEl.value
 inputEl.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); if(!sendBtn.disabled) send(inputEl.value) } });
 sendBtn.addEventListener("click",()=>send(inputEl.value));
 
+// Migrate old/deprecated models
+const DEPRECATED = {
+  "gemma2-9b-it":        "llama-3.1-8b-instant",
+  "gemma-7b-it":         "llama-3.1-8b-instant",
+  "llama3-70b-8192":     "llama-3.3-70b-versatile",
+  "llama3-8b-8192":      "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768":  "llama-4-scout-17b-16e-instruct"
+};
+function migrateModels(){
+  let changed=false;
+  state.sessions.forEach(s=>{
+    if(s.model && DEPRECATED[s.model]){
+      s.model=DEPRECATED[s.model]; changed=true;
+    }
+  });
+  if(changed) save();
+}
+
 // Init
 (function(){
+  migrateModels();
   if(state.sessions.length){ state.cid=state.sessions[0].id }
   else { newSession() }
+  // Sync select to current session model
+  const s=session();
+  if(s && s.model){
+    const opt=[...modelSel.options].find(o=>o.value===s.model);
+    if(opt){ modelSel.value=s.model; $("modelLabel").textContent=opt.text; }
+    else { $("modelLabel").textContent=modelSel.options[modelSel.selectedIndex].text; }
+  } else {
+    $("modelLabel").textContent=modelSel.options[modelSel.selectedIndex].text;
+  }
   renderHistory(); renderMsgs(); inputEl.focus();
-  $("modelLabel").textContent=modelSel.options[modelSel.selectedIndex].text;
 })();
 </script>
 </body>
